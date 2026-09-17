@@ -6,5 +6,4 @@
 .pixi/*
 !.pixi/config.toml
 
-# Agent worktrees are local, disposable checkouts.
 .worktrees/
