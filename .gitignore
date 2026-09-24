@@ -7,3 +7,6 @@
 !.pixi/config.toml
 
 .worktrees/
+
+# Test data
+test_data/
