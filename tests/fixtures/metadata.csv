@@ -1,0 +1,4 @@
+Sample Type,Name,Filepath,Batch,Group,Method
+Blank,blank_01,data/blank_01.mzML,1,Blank,LC-pos
+QC,qc_01,data/qc_01.mzML,1,QC,LC-pos
+Unknown,sample_01,data/sample_01.mzML,1,Treatment,LC-pos

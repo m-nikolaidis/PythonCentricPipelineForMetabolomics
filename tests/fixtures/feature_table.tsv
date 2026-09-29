@@ -1,0 +1,4 @@
+id_number	mz	rtime	left_base	right_base	parent_masstrack_id	peak_area	cSelectivity	goodness_fitting	snr	detection_counts	blank_01	qc_01	sample_01
+F001	100.1234	12.5	11.8	13.2	1	1200	0.95	0.99	12.0	3	10	20	30
+F002	150.5678	42.0	41.1	43.0	2	800	0.80	0.97	8.0	3	0	15	25
+F003	200.2468	87.25	86.5	88.0	3	500	0.70	0.94	5.0	2	5	0	18

@@ -893,6 +893,106 @@ class FeatureTable:
             }
         return result
 
+    def _plot_sample_embedding(
+        self: FeatureTable,
+        embedding: np.ndarray,
+        title: str,
+        x_label: str,
+        y_label: str,
+    ) -> None:
+        """Render a sample embedding with the configured QA/QC cosmetics.
+
+        Embedding plots need a little more control than the generic scatter
+        renderer: each sample can have both a metadata-derived colour and
+        marker, while labels and legends should remain readable.  The first
+        requested field of each cosmetic type is used, matching the existing
+        ``gen_figure`` behaviour.
+        """
+        fig_params = self.figure_params or {
+            "interactive": False,
+            "save_figs": False,
+            "colors": [],
+            "markers": [],
+            "text": [],
+            "color_legend": {},
+            "marker_legend": {},
+            "color_by": [],
+            "marker_by": [],
+            "text_by": [],
+        }
+        embedding = np.asarray(embedding)
+        xs = embedding[:, 0]
+        ys = embedding[:, 1]
+
+        colors = fig_params.get("colors", [])
+        markers = fig_params.get("markers", [])
+        text = fig_params.get("text", [])
+        color_values = colors[0] if colors else []
+        marker_values = markers[0] if markers else []
+        text_values = text[0] if text else []
+
+        fig, ax = plt.subplots()
+        try:
+            for index, (x, y) in enumerate(zip(xs, ys)):
+                point_kwargs = {"s": 18, "alpha": 0.8}
+                if index < len(color_values):
+                    point_kwargs["color"] = color_values[index]
+                if index < len(marker_values):
+                    point_kwargs["marker"] = marker_values[index]
+                ax.scatter([x], [y], **point_kwargs)
+
+                if index < len(text_values):
+                    ax.text(x, y, text_values[index])
+
+            ax.set_title(title)
+            ax.set_xlabel(x_label)
+            ax.set_ylabel(y_label)
+            ax.spines["right"].set_visible(False)
+            ax.spines["top"].set_visible(False)
+
+            marker_legend = fig_params.get("marker_legend", {})
+            color_legend = fig_params.get("color_legend", {})
+            handles = []
+            if marker_values and marker_legend:
+                handles.extend(
+                    mlines.Line2D(
+                        [],
+                        [],
+                        color="k",
+                        marker=marker,
+                        linestyle="None",
+                        markersize=7,
+                        label=label,
+                    )
+                    for label, marker in marker_legend.items()
+                    if marker in marker_values
+                )
+            if color_values and color_legend:
+                handles.extend(
+                    Patch(facecolor=color, label=label)
+                    for label, color in color_legend.items()
+                    if color in color_values
+                )
+            if handles:
+                ax.legend(
+                    handles=handles,
+                    loc="best",
+                    handlelength=1,
+                    markerscale=1.5,
+                    fontsize=7,
+                )
+
+            fig.tight_layout(rect=[0, 0, 0.88, 1] if handles else None)
+            if fig_params.get("save_figs", False):
+                fig.savefig(
+                    self.save_fig_path(title.replace(" ", "_")),
+                    dpi=300,
+                )
+            if fig_params.get("interactive", False):
+                plt.show()
+        finally:
+            plt.close(fig)
+
     def pca(self: FeatureTable, log_transform: bool = False) -> Dict[str, Any]:
         """
         Perform PCA on provided feature table, optionally log transform
@@ -915,8 +1015,7 @@ class FeatureTable:
             scaler.fit_transform((sample_ftable))
         )
         title = "pca" if not pca_log_transformed else "log_pca"
-        self.gen_figure(
-            "scatter",
+        self._plot_sample_embedding(
             pca_embedding,
             title,
             x_label="PC 1 "
@@ -940,43 +1039,64 @@ class FeatureTable:
 
     def tsne(self: FeatureTable, perplexity: int = 30) -> Dict[str, Any]:
         """
-        Perform TSNE on provided feature table
+        Perform t-SNE on the feature table's samples.
+
+        The requested perplexity is capped at one less than the number of
+        samples because scikit-learn requires ``perplexity < n_samples``.
+        Sample intensities are standardized before embedding so features with
+        larger absolute scales do not dominate the result.
 
         Args:
-            perplexity (int): perplexity value for TSNE
+            perplexity (int): requested perplexity value for t-SNE
 
-        Results
+        Returns:
             dict: QAQC result dict
+
+        Raises:
+            ValueError: if there are fewer than two samples or the requested
+                perplexity is not a finite positive number.
         """
+        sample_names = list(self.sample_columns)
+        n_samples = len(sample_names)
+        if n_samples < 2:
+            raise ValueError("t-SNE requires at least two samples")
+
         try:
-            tnse_embedded_vector_matrix = TSNE(
-                n_components=2, perplexity=perplexity
-            ).fit_transform(self.feature_table[self.sample_columns].T)
-            self.gen_figure(
-                "scatter",
-                tnse_embedded_vector_matrix,
-                "tsne",
-                x_label="Latent 1",
-                y_label="Latent 2",
-            )
-            result = {
-                "Type": "tsne",
-                "Config": {"n_components": 2},
-                "Result": {
-                    "Sample_Coord_Dict": {
-                        name: [float(x) for x in coord]
-                        for name, coord in zip(
-                            self.sample_columns, tnse_embedded_vector_matrix
-                        )
-                    }
-                },
-            }
-            return result
-        except BaseException:
-            if perplexity > 0:
-                perplexity -= 1
-                return self.tsne(perplexity)
-            return {}
+            requested_perplexity = float(perplexity)
+        except (TypeError, ValueError) as error:
+            raise ValueError("perplexity must be a finite positive number") from error
+        if not np.isfinite(requested_perplexity) or requested_perplexity <= 0:
+            raise ValueError("perplexity must be a finite positive number")
+
+        effective_perplexity = min(requested_perplexity, float(n_samples - 1))
+        sample_matrix = self.feature_table[sample_names].T.to_numpy(dtype=float)
+        scaled_sample_matrix = StandardScaler().fit_transform(sample_matrix)
+        tsne_embedding = TSNE(
+            n_components=2,
+            perplexity=effective_perplexity,
+            random_state=1234,
+        ).fit_transform(scaled_sample_matrix)
+        self._plot_sample_embedding(
+            tsne_embedding,
+            "tsne",
+            x_label="t-SNE 1",
+            y_label="t-SNE 2",
+        )
+        return {
+            "Type": "tsne",
+            "Config": {
+                "n_components": 2,
+                "perplexity": effective_perplexity,
+                "random_state": 1234,
+                "scaler": "StandardScaler",
+            },
+            "Result": {
+                "Sample_Coord_Dict": {
+                    name: [float(x) for x in coord]
+                    for name, coord in zip(sample_names, tsne_embedding)
+                }
+            },
+        }
 
     def missing_feature_percentiles(self: FeatureTable) -> Dict[str, Any]:
         """
